@@ -94,6 +94,13 @@ typedef struct uct {
 	bool val_bytemp;
 	floating_t val_bytemp_min;
 
+	/* Value-net leaf evaluation (AlphaGo-style leaf blending):
+	 *   leaf_value = (1 - value_net_mix) * rollout + value_net_mix * valuenet
+	 * where valuenet is a value estimate of the leaf position. 0 disables it
+	 * (pure rollouts, default). The provider is uct_leaf_value(); see there -
+	 * a real provider needs a batched NN (e.g. KataGo), this is the hook. */
+	floating_t value_net_mix;
+
 	int random_policy_chance;
 
 	struct {

@@ -394,13 +394,39 @@ uct_progress_status(uct_t *u, tree_t *t, board_t *b, enum stone color, int playo
 	uct_progress_gogui_livegfx(u, t, b, color, playouts, final);
 }
 
+/* Value estimate of the leaf position from BLACK's perspective ([0,1], 1 =
+ * black winning), or NAN if no value provider is available.
+ *
+ * >>> VALUE-NET INTEGRATION POINT <<<
+ * A real implementation queries a value network (e.g. KataGo's value head)
+ * here. Note the architectural catch: Pachi evaluates leaves synchronously,
+ * one per thread, so a production value net needs *leaf batching* + GPU eval,
+ * not a per-leaf synchronous call - that's the real work, and why KataGo
+ * (built around batched eval) is the realistic provider. The body below is a
+ * cheap static board estimate used ONLY to exercise/validate the blending
+ * plumbing and dose the mix; it is NOT a real value net. */
+static floating_t
+uct_leaf_value(uct_t *u, board_t *b, enum stone color)
+{
+	if (u->value_net_mix <= 0)  return NAN;
+
+	/* Placeholder (validation only): logistic of the current area score.
+	 * board_fast_score() is white-positive (see the ALERT in uct_playout). */
+	floating_t black_pts = -board_fast_score(b);
+	return 1.0 / (1.0 + exp(-black_pts / 10.0));
+}
+
 static floating_t
 uct_leaf_node(uct_t *u, board_t *b, enum stone player_color, amafmap_t *amaf,
-              tree_t *t, tree_node_t *n, enum stone node_color, int spaces)
+              tree_t *t, tree_node_t *n, enum stone node_color, int spaces,
+              floating_t *valuenet_out)
 {
 	enum stone next_color = stone_other(node_color);
 	int parity = (next_color == player_color ? 1 : -1);
 	amaf = (u->playout_amaf ? amaf : NULL);
+
+	/* Value-net estimate of the leaf position (before the rollout mutates b). */
+	*valuenet_out = uct_leaf_value(u, b, next_color);
 
 	if (UDEBUGL(7))
 		fprintf(stderr, "%*s*-- UCT playout #%d start [%s] %f\n",
@@ -580,7 +606,8 @@ uct_playout_descent(uct_t *u, board_t *b, enum stone player_color, tree_t *t)
 	 * but here positive number is black's win! Be VERY CAREFUL.
 	 * !!! !!! !!! */
 
-	floating_t score = uct_leaf_node(u, b, player_color, &amaf, t, n, node_color, spaces);
+	floating_t valuenet;
+	floating_t score = uct_leaf_node(u, b, player_color, &amaf, t, n, node_color, spaces, &valuenet);
 
 	/* Add extra komi (from black perspective: subtract) */
 	score -= extra_komi;
@@ -595,6 +622,10 @@ uct_playout_descent(uct_t *u, board_t *b, enum stone player_color, tree_t *t)
 
 	assert(n == t->root || n->parent);
 	floating_t rval = scale_value(u, b, node_color, significant, score);
+	/* Blend in the value-net leaf estimate (no-op unless enabled and a
+	 * provider returned a value). Both rval and valuenet are black-perspective. */
+	if (u->value_net_mix > 0 && !isnan(valuenet))
+		rval = (1 - u->value_net_mix) * rval + u->value_net_mix * valuenet;
 	u->policy->update(u->policy, t, n, node_color, player_color, &amaf, b, rval);
 
 	/* TODO Now that ownermap keeps track of real playouts average score

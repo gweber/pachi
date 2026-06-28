@@ -1502,6 +1502,12 @@ uct_setoption(engine_t *e, board_t *b, const char *optname, char *optval,
 		 * influenced by win size. Zero means it isn't. */
 		u->val_scale = atof(optval);
 	}
+	else if (!strcasecmp(optname, "value_net_mix") && optval) {
+		/* AlphaGo-style leaf blending: fraction of the leaf value taken
+		 * from a value-net estimate instead of the rollout (0..1, 0=off).
+		 * See uct_leaf_value() - needs a value provider to be useful. */
+		u->value_net_mix = atof(optval);
+	}
 	else if (!strcasecmp(optname, "val_points") && optval) {
 		/* Maximum size of win to be scaled into game
 		 * result value. Zero means boardsize^2. */
