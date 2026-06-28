@@ -191,9 +191,19 @@ static inline bool
 test_pattern3_here(playout_policy_t *p, board_t *b, move_t *m, bool middle_ladder, fixp_t *gamma)
 {
 	moggy_policy_t *pp = (moggy_policy_t*)p->data;
+	/* Cheap legality guard: must be an empty (on-board) point. This is also
+	 * what makes it safe to read the 3x3 neighborhood below - on an offboard
+	 * point pattern3_move_here() would read past the board edge. */
+	if (board_at(b, m->coord) != S_NONE)
+		return false;
 	/* Check if 3x3 pattern is matched by given move... */
 	char pi = -1;
 	if (!pattern3_move_here(&pp->patterns, b, m, &pi))
+		return false;
+	/* Full legality check (eye-ish / ko formations). Deferred until here:
+	 * it's notably more expensive than the 3x3 short-circuit and most points
+	 * around the last move match no pattern, so we skip it on that path. */
+	if (!board_is_valid_move(b, m))
 		return false;
 	/* ...and the move is not obviously stupid. */
 	if (is_bad_selfatari(b, m->color, m->coord))
@@ -214,7 +224,9 @@ apply_pattern_here(playout_policy_t *p, board_t *b, coord_t c, enum stone color,
 	moggy_policy_t *pp = (moggy_policy_t*)p->data;
 	move_t m2 = move(c, color);
 	fixp_t gamma;
-	if (board_is_valid_move(b, &m2) && test_pattern3_here(p, b, &m2, pp->middle_ladder, &gamma)) {
+	/* Validity is now checked inside test_pattern3_here(), after the cheap
+	 * 3x3 pattern short-circuit (see there). */
+	if (test_pattern3_here(p, b, &m2, pp->middle_ladder, &gamma)) {
 		gmq_add(q, c, gamma);
 	}
 }
