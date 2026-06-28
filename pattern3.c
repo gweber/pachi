@@ -11,22 +11,10 @@
 static void
 pattern_record(pattern3s_t *p, int pi, char *str, hash3_t pat, int fixed_color)
 {
-	hash3_t h = hash3_to_hash(pat);
-	while (p->hash[h].pattern != pat && p->hash[h].value)
-		h = (h + 1) & pattern3_hash_mask;
-
-	p->hash[h].pattern = pat;
-	p->hash[h].value = (fixed_color ? fixed_color : 3) | (pi << 2);
-
-#if 0
-	if (h != hash3_to_hash(pat) && p->hash[h].pattern != pat)
-		fprintf(stderr, "collision of %06x: %llx(%x)\n", pat, hash3_to_hash(pat), p->hash[hash3_to_hash(pat)].pattern);
-	if (p->hash[h].pattern == pat && (p->hash[h].value >> 2) != pi)
-		fprintf(stderr, "clobbering prev pattern %#06x value %i -> %i\n", pat, 
-			(p->hash[h].value >> 2), pi);
- 	/* Dump all patterns_record()     (including clobbers) */
- 	// fprintf(stderr, "[%s] %06x %d %i\n", str, pat, fixed_color, pi);
-#endif	
+	/* pat is a 20-bit code used to directly index the table (see
+	 * pattern3s_t). If several source patterns collapse to the same
+	 * code the last one recorded wins, same as before. */
+	p->value[pat] = (fixed_color ? fixed_color : 3) | (pi << 2);
 }
 
 static int
@@ -269,23 +257,4 @@ pattern3s_init(pattern3s_t *p, char src[][11], int src_n)
 	}
 
 	patterns_gen(p, nsrc, src_n);
-}
-
-hash3_t p3hashes[8][2][S_MAX];
-
-static __attribute__((constructor)) void
-p3hashes_init(void)
-{
-	/* tuned for 11482 collisions */
-	// 8577 collisions actually
-	/* XXX: tune better */
-	hash3_t h =  0x35373c;
-	for (int i = 0; i < 8; i++) {
-		for (int a = 0; a < 2; a++) {
-			p3hashes[i][a][S_NONE] = (h = h * 16803-7);
-			p3hashes[i][a][S_BLACK] = (h = h * 16805-2);
-			p3hashes[i][a][S_WHITE] = (h = h * 16807-11);
-			p3hashes[i][a][S_OFFBOARD] = (h = h * 16809+7);
-		}
-	}
 }

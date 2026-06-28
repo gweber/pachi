@@ -21,23 +21,18 @@
 /* XXX: See <board.h> for hash3_t typedef. */
 
 typedef struct {
-	hash3_t pattern;
-	unsigned char value;
-} pattern2p_t;
-
-typedef struct {
-	/* In case of a collision, following hash entries are
-	 * used. value==0 indicates an unoccupied hash entry. */
-	/* The hash indices are zobrist hashes based on p3hashes. */
-#define pattern3_hash_bits 19
-#define pattern3_hash_size (1 << pattern3_hash_bits)
-#define pattern3_hash_mask (pattern3_hash_size - 1)
-	pattern2p_t hash[pattern3_hash_size];
+	/* The 3x3 pattern code (hash3_t, see pattern3_hash()) is only 20 bits
+	 * wide (16 color bits + 4 atari bits), so we use it to directly index
+	 * this table rather than hashing into a sparse one. value == 0 means
+	 * "no pattern matches here"; otherwise bit 0/1 = pattern matches for
+	 * black/white and (value >> 2) = pattern index (used to look up gamma).
+	 * Direct indexing avoids both the zobrist hash and the open-addressing
+	 * probe; the table is also 4x smaller (1MB) than the old hash table so
+	 * it stays cache-resident during playouts. */
+#define pattern3_table_bits 20
+#define pattern3_table_size (1 << pattern3_table_bits)
+	unsigned char value[pattern3_table_size];
 } pattern3s_t;
-
-/* Zobrist hashes for the various 3x3 points. */
-/* [point][is_atari][color] */
-extern hash3_t p3hashes[8][2][S_MAX];
 
 /* Source pattern encoding:
  * X: black;  O: white;  .: empty;  #: edge
@@ -97,17 +92,6 @@ pattern3_hash(board_t *b, coord_t c)
 #undef atari_at
 }
 
-static inline __attribute__((const)) hash3_t
-hash3_to_hash(hash3_t pat)
-{
-	hash3_t h = 0;
-	static const int ataribits[8] = { -1, 0, -1, 1, 2, -1, 3, -1 };
-	for (int i = 0; i < 8; i++) {
-		h ^= p3hashes[i][ataribits[i] >= 0 ? (pat >> (16 + ataribits[i])) & 1 : 0][(pat >> (i*2)) & 3];
-	}
-	return (h & pattern3_hash_mask);
-}
-
 static inline bool
 pattern3_move_here(pattern3s_t *p, board_t *b, move_t *m, char *idx)
 {
@@ -130,12 +114,10 @@ pattern3_move_here(pattern3s_t *p, board_t *b, move_t *m, char *idx)
 #else
 	hash3_t pat = pattern3_hash(b, m->coord);
 #endif
-	hash3_t h = hash3_to_hash(pat);
-
-	while (p->hash[h].pattern != pat && p->hash[h].value)
-		h = (h + 1) & pattern3_hash_mask;
-	if (p->hash[h].value & m->color) {
-		*idx = p->hash[h].value >> 2;
+	/* Direct table lookup: pat is a 20-bit code (see pattern3s_t). */
+	unsigned char value = p->value[pat];
+	if (value & m->color) {
+		*idx = value >> 2;
 		return true;
 	}
 
