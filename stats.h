@@ -43,17 +43,20 @@ stats_add_result(move_stats_t *s, floating_t result, int playouts)
 {
 	int s_playouts = s->playouts;
 	floating_t s_value = s->value;
-	/* Force the load, another thread can work on the
-	 * values in parallel. */
-	__sync_synchronize(); /* full memory barrier */
 
 	s_playouts += playouts;
 	s_value += (result - s_value) * playouts / s_playouts;
 
-	/* We rely on the fact that these two assignments are atomic. */
+	/* We rely on the fact that these two assignments are atomic.
+	 * Publish the value before the playout count with a store-release:
+	 * a concurrent reader that sees the new count is then guaranteed to
+	 * also see the matching value (otherwise a node could be evaluated
+	 * with a raised count but a stale/zero value). On x86 (TSO) this
+	 * compiles to a plain store; on weakly-ordered archs (ARM) it's a
+	 * cheap store-release instead of the two full memory barriers we
+	 * used to emit on every stats update. */
 	s->value = s_value;
-	__sync_synchronize(); /* full memory barrier */
-	s->playouts = s_playouts;
+	__atomic_store_n(&s->playouts, s_playouts, __ATOMIC_RELEASE);
 }
 
 static inline void
@@ -62,17 +65,14 @@ stats_rm_result(move_stats_t *s, floating_t result, int playouts)
 	if (s->playouts > playouts) {
 		int s_playouts = s->playouts;
 		floating_t s_value = s->value;
-		/* Force the load, another thread can work on the
-		 * values in parallel. */
-		__sync_synchronize(); /* full memory barrier */
 
 		s_playouts -= playouts;
 		s_value += (s_value - result) * playouts / s_playouts;
 
-		/* We rely on the fact that these two assignments are atomic. */
+		/* Publish value before the playout count (store-release), as in
+		 * stats_add_result(). */
 		s->value = s_value;
-		__sync_synchronize(); /* full memory barrier */
-		s->playouts = s_playouts;
+		__atomic_store_n(&s->playouts, s_playouts, __ATOMIC_RELEASE);
 
 	} else {
 		/* We don't touch the value, since in parallel, another
